@@ -1,0 +1,50 @@
+name: car.gr Morning Brief
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # 08:00 Athens during EEST (summer, UTC+3)
+    - cron: '0 6 * * *'   # 08:00 Athens during EET  (winter, UTC+2)
+  workflow_dispatch:        # manual "Run workflow" button (baseline / on-demand)
+
+permissions:
+  contents: write           # allow committing state.json back to the repo
+
+concurrency:
+  group: cargr-brief
+  cancel-in-progress: false
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate to 08:00 Athens (DST-safe)
+        id: gate
+        run: |
+          H=$(TZ=Europe/Athens date +%H)
+          echo "Athens hour: $H"
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && [ "$H" != "08" ]; then
+            echo "Not 08:00 in Athens — skipping this trigger."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the brief
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          ZENROWS_KEY: ${{ secrets.ZENROWS_KEY }}
+          RESEND_KEY: ${{ secrets.RESEND_KEY }}
+        run: python3 cargr_brief.py
+
+      - name: Commit updated state
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          git config user.name "cargr-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          if git diff --cached --quiet; then
+            echo "No state change to commit."
+          else
+            git commit -m "state: $(TZ=Europe/Athens date +%F)"
+            git push
+          fi
