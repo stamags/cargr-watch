@@ -2,8 +2,11 @@ name: car.gr Morning Brief
 
 on:
   schedule:
-    - cron: '0 5 * * *'   # 08:00 Athens during EEST (summer, UTC+3)
-    - cron: '0 6 * * *'   # 08:00 Athens during EET  (winter, UTC+2)
+    # Fire at 05:07, 06:07, 07:07 UTC. Off-the-hour dodges GitHub's top-of-hour
+    # congestion (which delays/drops scheduled runs). The Python send-once-per-day
+    # guard makes the first fire at/after 08:00 Athens send, the rest skip — so it
+    # lands at 08:00 in BOTH DST seasons and survives a delayed/missed tick.
+    - cron: '7 5-7 * * *'
   workflow_dispatch:        # manual "Run workflow" button (baseline / on-demand)
 
 permissions:
@@ -19,25 +22,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Gate to 08:00 Athens (DST-safe)
-        id: gate
-        run: |
-          H=$(TZ=Europe/Athens date +%H)
-          echo "Athens hour: $H"
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && [ "$H" != "08" ]; then
-            echo "Not 08:00 in Athens — skipping this trigger."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Run the brief
-        if: steps.gate.outputs.skip != 'true'
         env:
           ZENROWS_KEY: ${{ secrets.ZENROWS_KEY }}
           RESEND_KEY: ${{ secrets.RESEND_KEY }}
+          # Manual runs bypass the once-per-day / time-of-day guard so testing always sends.
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: python3 cargr_brief.py
 
       - name: Commit updated state
-        if: steps.gate.outputs.skip != 'true'
         run: |
           git config user.name "cargr-bot"
           git config user.email "actions@users.noreply.github.com"

@@ -17,7 +17,20 @@ SEARCHES = [
      "url": "https://www.car.gr/used-cars/alfa_romeo.html?category=15001&fuel_type=2&make=32458&model=16730&model=18921&registration-from=2020"},
 ]
 
-TODAY = datetime.date.today().strftime("%d/%m/%Y")
+try:
+    from zoneinfo import ZoneInfo
+    _ATHENS = ZoneInfo("Europe/Athens")
+except Exception:
+    _ATHENS = None
+
+def athens_now():
+    if _ATHENS is not None:
+        return datetime.datetime.now(_ATHENS)
+    return datetime.datetime.utcnow() + datetime.timedelta(hours=2)  # rough fallback
+
+NOW = athens_now()
+TODAY = NOW.strftime("%d/%m/%Y")
+TODAY_ISO = NOW.strftime("%Y-%m-%d")
 
 # ---------------- HTTP helpers ----------------
 UA = "Mozilla/5.0 (cargr-watch; +https://car.gr) curl/8"
@@ -220,6 +233,19 @@ def send_email(subject, html):
 def main():
     state = load_state()
     state.setdefault("searches", {})
+
+    # Send-once-per-day guard (Athens time). Robust to cron delays: several UTC
+    # crons fire around 08:00 Athens; the first one at/after 08:00 that hasn't
+    # sent today wins, the rest see last_sent==today and skip. FORCE=1 (manual
+    # workflow_dispatch) bypasses both checks for on-demand testing.
+    if os.environ.get("FORCE") != "1":
+        if NOW.hour < 8:
+            print("Too early in Athens (%02d:%02d) — skipping this trigger." % (NOW.hour, NOW.minute))
+            return
+        if state.get("last_sent") == TODAY_ISO:
+            print("Already sent today (%s) — skipping duplicate trigger." % TODAY_ISO)
+            return
+
     sections, totals = [], {"new": 0, "changes": 0}
     any_baseline = False
     for s in SEARCHES:
@@ -253,8 +279,9 @@ def main():
     status, resp = send_email(subj, body)
     print("EMAIL:", status, resp[:200])
     if status in (200, 201):
+        state["last_sent"] = TODAY_ISO
         save_state(state)
-        print("STATE saved. searches:", {k: len(v) for k, v in state["searches"].items()})
+        print("STATE saved (last_sent=%s). searches:" % TODAY_ISO, {k: len(v) for k, v in state["searches"].items()})
     else:
         print("EMAIL FAILED — state NOT updated.", file=sys.stderr)
         sys.exit(1)
