@@ -1,12 +1,21 @@
 name: car.gr Morning Brief
 
 on:
+  # PRIMARY trigger: an external, punctual scheduler (cron-job.org / Cloudflare
+  # Worker / anything that can POST) fires this at 08:00 Europe/Athens via
+  #   POST /repos/stamags/cargr-watch/dispatches  {"event_type":"cargr-brief"}
+  # GitHub's own cron is NOT punctual: through Oct-Nov 2026 it fired 4-9.5 h
+  # late every single day, so the "morning" brief arrived between 11:43 and
+  # 17:51 Athens. See the state.json commit times for the evidence.
+  repository_dispatch:
+    types: [cargr-brief]
+
+  # FALLBACK net only: if the external trigger misses a day, these may still
+  # catch it — but a run that lands after SEND_UNTIL_HOUR now skips instead of
+  # sending a stale "morning" brief in the afternoon.
   schedule:
-    # Fire at 05:07, 06:07, 07:07 UTC. Off-the-hour dodges GitHub's top-of-hour
-    # congestion (which delays/drops scheduled runs). The Python send-once-per-day
-    # guard makes the first fire at/after 08:00 Athens send, the rest skip — so it
-    # lands at 08:00 in BOTH DST seasons and survives a delayed/missed tick.
     - cron: '7 5-7 * * *'
+
   workflow_dispatch:        # manual "Run workflow" button (baseline / on-demand)
 
 permissions:
@@ -26,7 +35,11 @@ jobs:
         env:
           ZENROWS_KEY: ${{ secrets.ZENROWS_KEY }}
           RESEND_KEY: ${{ secrets.RESEND_KEY }}
-          # Manual runs bypass the once-per-day / time-of-day guard so testing always sends.
+          # Athens-hour send window. Override with repo variables
+          # (Settings -> Secrets and variables -> Actions -> Variables).
+          SEND_FROM_HOUR: ${{ vars.SEND_FROM_HOUR || '8' }}
+          SEND_UNTIL_HOUR: ${{ vars.SEND_UNTIL_HOUR || '10' }}
+          # Manual runs bypass the window / once-per-day guard so testing always sends.
           FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: python3 cargr_brief.py
 

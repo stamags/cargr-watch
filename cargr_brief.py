@@ -11,6 +11,12 @@ STATE_FILE  = os.environ.get("STATE_FILE", "state.json")
 EMAIL_TO    = os.environ.get("EMAIL_TO", "stamags1988@gmail.com")
 EMAIL_FROM  = os.environ.get("EMAIL_FROM", "car.gr watch <onboarding@resend.dev>")
 
+# Send window in Athens hours. A trigger that runs before SEND_FROM_HOUR waits
+# for the next one; a trigger that runs at/after SEND_UNTIL_HOUR skips the day
+# entirely, because a "morning brief" delivered in the afternoon is just noise.
+SEND_FROM_HOUR  = int(os.environ.get("SEND_FROM_HOUR", "8"))
+SEND_UNTIL_HOUR = int(os.environ.get("SEND_UNTIL_HOUR", "10"))
+
 # --- Add more searches here anytime (name + car.gr URL) ---
 SEARCHES = [
     {"name": "Alfa Romeo Giulia + Stelvio · Πετρέλαιο · 2020+",
@@ -234,13 +240,21 @@ def main():
     state = load_state()
     state.setdefault("searches", {})
 
-    # Send-once-per-day guard (Athens time). Robust to cron delays: several UTC
-    # crons fire around 08:00 Athens; the first one at/after 08:00 that hasn't
-    # sent today wins, the rest see last_sent==today and skip. FORCE=1 (manual
-    # workflow_dispatch) bypasses both checks for on-demand testing.
+    # Send-once-per-day guard (Athens time). The first trigger inside the
+    # [SEND_FROM_HOUR, SEND_UNTIL_HOUR) window that hasn't sent today wins; the
+    # rest see last_sent==today and skip. The upper bound matters: GitHub's cron
+    # routinely fires hours late and the old guard had no late check, so a
+    # delayed tick happily mailed a "morning" brief at 17:51. FORCE=1 (manual
+    # workflow_dispatch) bypasses all three checks for on-demand testing.
     if os.environ.get("FORCE") != "1":
-        if NOW.hour < 8:
-            print("Too early in Athens (%02d:%02d) — skipping this trigger." % (NOW.hour, NOW.minute))
+        if NOW.hour < SEND_FROM_HOUR:
+            print("Too early in Athens (%02d:%02d, window opens %02d:00) — skipping this trigger."
+                  % (NOW.hour, NOW.minute, SEND_FROM_HOUR))
+            return
+        if NOW.hour >= SEND_UNTIL_HOUR:
+            print("Too late in Athens (%02d:%02d, window closed %02d:00) — skipping; "
+                  "tomorrow's run will diff against the same state."
+                  % (NOW.hour, NOW.minute, SEND_UNTIL_HOUR))
             return
         if state.get("last_sent") == TODAY_ISO:
             print("Already sent today (%s) — skipping duplicate trigger." % TODAY_ISO)
